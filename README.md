@@ -4,7 +4,7 @@
 
 1. 香川大学のドリームキャンパスから受講している講義の一覧を取得する
 1. 受講している講義の教科書をシラバスから取得する
-1. 結果をGoogle スプレットシートにまとめる
+1. 結果をエクセルにまとめる
 
 ## build
 
@@ -15,7 +15,7 @@ docker compose up --build
 ## run python
 
 ```sh
-docker exec selenium-app-1 python main.py
+docker exec kagawa_univ_search_text_book-app-1 python Search_Text_Book.py
 ```
 
 ## view browser
