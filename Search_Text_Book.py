@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from bs4 import element
 from openpyxl.worksheet import worksheet
 from openpyxl import load_workbook
+from openpyxl import Workbook
 
 from typing import NamedTuple
 from os import environ
@@ -93,8 +94,15 @@ def excel_insert_line(
 
 def save_to_excel(lesson_and_textbooks: dict[str, str]) -> None:
     EXCEL_PATH = environ["EXCEL_PATH"]
-    book = load_workbook(EXCEL_PATH)
-    sheet = book["sheet1"]
+    SHEET_NAME = "Sheet"
+    try:
+        book = load_workbook(EXCEL_PATH)
+    except FileNotFoundError:
+        book = Workbook()
+    try:
+        sheet = book[SHEET_NAME]
+    except KeyError:
+        sheet = book.create_sheet(SHEET_NAME)
     legends = ["講義名", "教科書・参考書等"]
     excel_insert_line(sheet=sheet, line=legends, start_row=1, start_column=1)
     for idx, (lesson_name, textbook_descriptions) in enumerate(
