@@ -1,96 +1,118 @@
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-# from selenium.webdriver.support.select import Select
+from selenium.webdriver.common.by import By
+from selenium.webdriver import Remote
 from bs4 import BeautifulSoup
-import requests
-import pandas as pd
-import json
-import time
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from bs4 import element
+from openpyxl.worksheet import worksheet
+from openpyxl import load_workbook
 
-open_json = open("./json/my_id_and_pass.json")
-session = json.load(open_json)
-login_id = session["id"]
-login_pass = session["pass"]
+from typing import NamedTuple
+from os import environ
 
-def set_up_chrome_driver():
-    # ここでいろいろやる
-    options = Options() 
-    options.binary_location = '/usr/bin/google-chrome' 
-    #chrome binary location specified here 
-    options.add_argument('--start-maximized') 
-    #open Browser in maximized mode 
-    options.add_argument('--no-sandbox') 
-    #bypass OS security model 
-    options.add_argument('--disable-dev-shm-usage') 
-    #overcome limited resource problems 
-    options.add_experimental_option('excludeSwitches', ['enable-automation']) 
-    options.add_experimental_option('useAutomationExtension', False) 
-    chrome_driver = webdriver.Chrome(options=options, executable_path=r'/usr/bin/chromedriver')
+
+class UserConf_NamedTuple(NamedTuple):
+    id: str
+    password: str
+
+
+def load_conf() -> UserConf_NamedTuple:
+    return UserConf_NamedTuple(
+        id=environ["LOGIN_ID"], password=environ["LOGIN_PASSWORD"]
+    )
+
+
+def set_up_chrome_driver() -> Remote:
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    chrome_driver = Remote(
+        command_executor=environ["SELENIUM_URL"], options=chrome_options
+    )
+    # set timeout for find elements or for complete commands
+    chrome_driver.implicitly_wait(10)
     return chrome_driver
 
-def login_Dream_Canpas(chrome_driver):
-    chrome_driver.get("https://www2.st.kagawa-u.ac.jp/Portal/?_gl=1*iafbpx*_ga*NjA3MDk0NzIwLjE2Mzk0NjU5ODk.*_ga_GF93XH9WXM*MTY5MzIwODI1Ny42OC4xLjE2OTMyMDk1NjYuNjAuMC4w")
-    chrome_driver.find_element_by_id("txtID").send_keys(login_id)
-    time.sleep(0.2)
-    chrome_driver.find_element_by_id("txtPassWord").send_keys(login_pass)
-    time.sleep(0.2)
-    chrome_driver.find_element_by_id("btnLogIn").click()
-    time.sleep(1.0)
 
-def get_Syllabus_list(chrome_driver):
-    chrome_driver.get("https://www2.st.kagawa-u.ac.jp/Portal/StudentApp/Regist/RegistList.aspx")
+def login_dream_campas(chrome_driver: Remote, login_info: UserConf_NamedTuple):
+    chrome_driver.get("https://www2.st.kagawa-u.ac.jp/Portal/")
+    chrome_driver.find_element(By.ID, "txtID").send_keys(login_info.id)
+    chrome_driver.find_element(By.ID, "txtPassWord").send_keys(login_info.password)
+    chrome_driver.find_element(By.ID, "btnLogIn").click()
+
+
+def get_registlist_atags(chrome_driver: Remote) -> list[element.Tag]:
+    chrome_driver.get(
+        "https://www2.st.kagawa-u.ac.jp/Portal/StudentApp/Regist/RegistList.aspx"
+    )
     html = chrome_driver.page_source.encode("utf-8")
-    soup_race = BeautifulSoup(html, "html.parser")
-    elems = soup_race.select("a")
-    syllabus_list = []
-    for elem in elems:
-        href = elem.get("href")
-        if href is not None and "Portal/Public/Syllabus" in href:
-            syllabus_list.append(href)
-    return syllabus_list 
+    soup = BeautifulSoup(html, "html.parser")
+    a_tags: element.ResultSet[element.Tag] = soup.find_all("a", href=True)
+    # filter a_tag that has href linking toward the syllabus page
+    return [a_tag for a_tag in a_tags if "Portal/Public/Syllabus" in str(a_tag["href"])]
 
-def get_Text_Book(url):
-    df_text_book = pd.read_html(url, match="教科書・参考書等")
-    return df_text_book[-1].iloc[1,0]
 
-def get_lesson_name(url):
-    html = requests.get(url)
-    html.raise_for_status()
-    soup = BeautifulSoup(html.content, "lxml")
-    lesson_name = soup.select("#ctl00_phContents_sylSummary_txtSbjName")
-    return str(lesson_name[0])[50:-7]
+def get_syllabus_url(a_tag: element.Tag) -> str:
+    href = str(a_tag["href"])
+    return href
 
-def create_lesson_name_and_Text_Book_list(syllabus_list):
-    lesson_name_and_Text_Book_list = []
-    for syllabus in syllabus_list:
-        text_book = get_Text_Book(syllabus)
-        lesson_name = get_lesson_name(syllabus)
-        lesson_name_and_Text_Book_list.append([lesson_name, text_book])
-    return lesson_name_and_Text_Book_list
 
-def insert_data_to_spread_sheet(lesson_name_and_Text_Book_list):
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("./json/search-text-books-4f7b032614d3.json", scope)
-    client = gspread.authorize(creds)
+def get_lesson_name(a_tag: element.Tag) -> str:
+    lesson_name = str(a_tag.string)
+    return lesson_name
 
-    url = "https://docs.google.com/spreadsheets/d/***"
-    sheet = client.open_by_url(url).sheet1
 
-    row = ["講義名", "教科書・参考書等"]
-    sheet.insert_row(row, 1)
+def get_textbook(chrome_driver: Remote, a_tag: element.Tag) -> str:
+    syllabus_url = get_syllabus_url(a_tag)
+    chrome_driver.get(syllabus_url)
+    # 「教科書・参考書等」の内容が入っている span tag の中身
+    text_description = chrome_driver.find_element(
+        By.ID, "ctl00_phContents_ucSylContents_cateRequiredTexts_lblNormal"
+    ).text
+    return text_description
 
-    index = 2
-    for lesson_name_and_Text_Book in lesson_name_and_Text_Book_list:
-        print(lesson_name_and_Text_Book)
-        sheet.insert_row(lesson_name_and_Text_Book, index)
-        index += 1
+
+def create_lesson_name_and_textbook_dict(
+    chrome_driver: Remote, registlist_a_tag_list: list[element.Tag]
+) -> dict[str, str]:
+    lesson_and_textbook: dict[str, str] = {}
+    for registlist_a_tag in registlist_a_tag_list:
+        lesson_name = get_lesson_name(registlist_a_tag)
+        textbook = get_textbook(chrome_driver, registlist_a_tag)
+        lesson_and_textbook[lesson_name] = textbook
+    return lesson_and_textbook
+
+
+def excel_insert_line(
+    sheet: worksheet.Worksheet, line: list, start_row: int, start_column: int
+) -> None:
+    for elem_idx, line_elem in enumerate(line):
+        sheet.cell(row=start_row, column=start_column + elem_idx, value=line_elem)
+
+
+def save_to_excel(lesson_and_textbooks: dict[str, str]) -> None:
+    EXCEL_PATH = environ["EXCEL_PATH"]
+    book = load_workbook(EXCEL_PATH)
+    sheet = book["sheet1"]
+    legends = ["講義名", "教科書・参考書等"]
+    excel_insert_line(sheet=sheet, line=legends, start_row=1, start_column=1)
+    for idx, (lesson_name, textbook_descriptions) in enumerate(
+        lesson_and_textbooks.items()
+    ):
+        excel_insert_line(
+            sheet=sheet,
+            line=[lesson_name, textbook_descriptions],
+            start_row=2 + idx,
+            start_column=1,
+        )
+    book.save(EXCEL_PATH)
+
 
 if __name__ == "__main__":
     chrome_driver = set_up_chrome_driver()
-    login_Dream_Canpas(chrome_driver)
-    syllabus_list = get_Syllabus_list(chrome_driver)
-    chrome_driver.close()
-    lesson_name_and_Text_Book_list = create_lesson_name_and_Text_Book_list(syllabus_list)
-    insert_data_to_spread_sheet(lesson_name_and_Text_Book_list)
+    login_dream_campas(chrome_driver, load_conf())
+    a_tags = get_registlist_atags(chrome_driver)
+    lesson_and_textbook = create_lesson_name_and_textbook_dict(chrome_driver, a_tags)
+    chrome_driver.quit()
+    save_to_excel(lesson_and_textbook)
