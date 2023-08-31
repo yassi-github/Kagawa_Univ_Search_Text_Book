@@ -11,7 +11,7 @@ services:
     depends_on:
       - selenium
     volumes:
-      - ./src:/app
+      - ./:/app
     environment:
       SELENIUM_URL: http://selenium:4444/wd/hub
       LOGIN_ID: 00T000
